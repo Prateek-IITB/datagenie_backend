@@ -7,6 +7,17 @@ const sqlRoutes = require('./routes/sql');
 const app = express();
 const schemaRoutes = require('./routes/schema');
 
+const allowedOrigins = ['https://datagenie-frontend-brcz0muob-prateeks-projects-619ca985.vercel.app'];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
 
 app.use(cors());
 app.use(express.json());
