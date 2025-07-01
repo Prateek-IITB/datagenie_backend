@@ -7,7 +7,7 @@ const sqlRoutes = require('./routes/sql');
 const app = express();
 const schemaRoutes = require('./routes/schema');
 
-const allowedOrigins = ['https://datagenie-frontend.vercel.app',
+const allowedOrigins = ['https://https://datagenie.wizevelocity.com',
   'http://localhost:3000',
 ];
 
