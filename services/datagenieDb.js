@@ -13,6 +13,7 @@ require('dotenv').config();
 
 const datageniePool = mysql.createPool({
   host: process.env.DATAGENIE_DB_HOST,
+  port: process.env.DATAGENIE_DB_PORT || 3306, // Default MySQL port
   user: process.env.DATAGENIE_DB_USER,
   password: process.env.DATAGENIE_DB_PASSWORD,
   database: process.env.DATAGENIE_DB_NAME,
