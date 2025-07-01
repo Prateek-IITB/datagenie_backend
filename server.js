@@ -7,7 +7,9 @@ const sqlRoutes = require('./routes/sql');
 const app = express();
 const schemaRoutes = require('./routes/schema');
 
-const allowedOrigins = ['https://datagenie-frontend-brcz0muob-prateeks-projects-619ca985.vercel.app'];
+const allowedOrigins = ['https://datagenie-frontend.vercel.app',
+  'http://localhost:3000',
+];
 
 app.use(cors({
   origin: function (origin, callback) {
