@@ -1,13 +1,14 @@
-
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
 const sqlRoutes = require('./routes/sql');
-const app = express();
 const schemaRoutes = require('./routes/schema');
 
-const allowedOrigins = ['https://https://datagenie.wizevelocity.com',
+const app = express();
+
+const allowedOrigins = [
+  'https://datagenie.wizevelocity.com',
   'http://localhost:3000',
 ];
 
@@ -21,7 +22,6 @@ app.use(cors({
   }
 }));
 
-app.use(cors());
 app.use(express.json());
 app.use('/api', sqlRoutes);
 app.use('/api/schema', schemaRoutes);
