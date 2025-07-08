@@ -4,8 +4,10 @@ const express = require('express');
 const cors = require('cors');
 const sqlRoutes = require('./routes/sql');
 const schemaRoutes = require('./routes/schema');
+const authRoutes = require('./routes/auth');
 
 const app = express();
+
 
 const allowedOrigins = [
   'https://datagenie.wizevelocity.com',
@@ -25,7 +27,7 @@ app.use(cors({
 app.use(express.json());
 app.use('/api', sqlRoutes);
 app.use('/api/schema', schemaRoutes);
-
+app.use('/api/auth', authRoutes);
 app.get('/', (req, res) => {
   res.send('SaaS SQL backend is running!');
 });
