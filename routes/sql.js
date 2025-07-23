@@ -27,7 +27,7 @@ router.post('/generate-sql', async (req, res) => {
     // ⬆️ Step 1: Get schema first so we can pass it into the classifier
     const [columns] = await datagenieDb.execute(`
       SELECT table_name, column_name, data_type, description
-      FROM column_descriptions
+      FROM table_columns
       WHERE company_id = (
         SELECT company_id FROM users WHERE id = ?
       )

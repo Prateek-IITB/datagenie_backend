@@ -21,9 +21,11 @@ async function getCompanyDbByUserId(userId) {
   let rows;
   try {
     [rows] = await datagenieDb.execute(`
-      SELECT c.id as companyId, c.db_host, c.db_user, c.db_password_encrypted as db_password, c.db_name, c.db_port
+      SELECT c.id as companyId, e.host_url, e.username, e.password as db_password, ed.name
       FROM users u
       JOIN companies c ON u.company_id = c.id
+      JOIN endpoints e on c.id = e.company_id
+      JOIN endpoint_databases ed on ed.endpoint_id = e.id
       WHERE u.id = ?
     `, [userId]);
   } catch (err) {
@@ -66,3 +68,4 @@ async function getCompanyDbByUserId(userId) {
 }
 
 module.exports = getCompanyDbByUserId;
+

@@ -1,146 +1,111 @@
 const express = require('express');
 const router = express.Router();
-const datagenieDb = require('../services/datagenieDb');
-const getCompanyDbByUserId = require('../services/companyDb'); // dynamically connects
+const pool = require('../services/datagenieDb.js');
 
-// Retry wrapper
-const executeWithRetry = async (query, params, retries = 3) => {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await datagenieDb.execute(query, params);
-    } catch (err) {
-      if (err.code === 'ER_LOCK_DEADLOCK' && i < retries - 1) {
-        console.warn('Deadlock detected. Retrying...');
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      } else {
-        throw err;
-      }
-    }
-  }
-};
-
-// 🚀 Step A: Refresh + Cache schema from actual company DB
-router.post('/refresh', async (req, res) => {
-  console.log('🔄 Refreshing schema cache...');
-  const user_id = req.body.user_id || 1;
+// GET full schema for the user's company (deeply nested)
+router.get('/', async (req, res) => {
+  const userId = req.query.user_id;
+  if (!userId) return res.status(400).json({ error: 'Missing user_id' });
 
   try {
-    // 1. Get dynamic company DB
-    const companyDb = await getCompanyDbByUserId(user_id);
+    // Get company_id from user
+    const [userRows] = await pool.query('SELECT company_id FROM users WHERE id = ? AND is_active = 1', [userId]);
+    if (userRows.length === 0) return res.status(404).json({ error: 'User not found or inactive' });
+    const companyId = userRows[0].company_id;
 
-    // 2. Get company_id from users table
-    const [companyInfo] = await datagenieDb.execute(
-      `SELECT company_id FROM users WHERE id = ?`,
-      [user_id]
+    // Fetch endpoints for this company
+    const [endpoints] = await pool.query(
+      'SELECT * FROM endpoints WHERE company_id = ? AND is_active = 1',
+      [companyId]
     );
 
-    if (!companyInfo.length) {
-      return res.status(404).json({ error: 'User or company not found' });
+    for (const endpoint of endpoints) {
+      // Fetch databases for this endpoint
+      const [databases] = await pool.query(
+        'SELECT * FROM endpoint_databases WHERE endpoint_id = ? AND is_active = 1',
+        [endpoint.id]
+      );
+
+      for (const db of databases) {
+        // Fetch tables for this database
+        const [tables] = await pool.query(
+          'SELECT * FROM database_tables WHERE database_id = ? AND is_active = 1',
+          [db.id]
+        );
+
+        for (const table of tables) {
+          // Fetch columns for this table
+          const [columns] = await pool.query(
+            `SELECT c.id, c.name, c.data_type, cd.description
+             FROM table_columns c
+             LEFT JOIN column_descriptions cd ON c.id = cd.column_id
+             WHERE c.table_id = ? AND c.is_active = 1`,
+            [table.id]
+          );
+
+          table.columns = columns;
+        }
+
+        db.tables = tables;
+      }
+
+      endpoint.databases = databases;
     }
 
-    const company_id = companyInfo[0].company_id;
+    res.json(endpoints);
+  } catch (error) {
+    console.error('Error in GET /schema:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-    // 3. Fetch schema from the actual company DB
-    const [schemaRows] = await companyDb.execute(`
-      SELECT 
-        TABLE_NAME as table_name,
-        COLUMN_NAME as column_name,
-        DATA_TYPE as data_type
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-    `);
+// POST to refresh schema (UI-triggered manual refresh)
+router.post('/refresh', async (req, res) => {
+  const { user_id } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
 
-    // 4. Save to column_descriptions table in datagenie DB
-    const insertQuery = `
-      INSERT INTO column_descriptions (company_id, table_name, column_name, data_type)
-      VALUES (?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE data_type = VALUES(data_type)
-    `;
-
-    for (const row of schemaRows) {
-      await executeWithRetry(insertQuery, [
-        company_id,
-        row.table_name,
-        row.column_name,
-        row.data_type,
-      ]);
-    }
-
-    res.json({ success: true, inserted: schemaRows.length });
-  } catch (err) {
-    console.error('❌ Error refreshing schema cache:', err);
+  try {
+    // Perform the schema fetching logic for each endpoint and insert into DB
+    // You will integrate the actual schema fetching code here (Databricks, Snowflake, etc.)
+    console.log(`Refreshing schema for user_id ${user_id}...`);
+    res.json({ message: 'Schema refresh initiated.' });
+  } catch (error) {
+    console.error('Error in POST /schema/refresh:', error);
     res.status(500).json({ error: 'Failed to refresh schema' });
   }
 });
 
-// 💾 Step B: Save Descriptions
+// Save column descriptions
 router.post('/save-descriptions', async (req, res) => {
-  const { data, user_id = 1 } = req.body;
-
-  if (!Array.isArray(data)) {
-    return res.status(400).json({ error: 'Invalid data format' });
+  const { descriptions } = req.body;
+  if (!descriptions || !Array.isArray(descriptions)) {
+    return res.status(400).json({ error: 'Invalid descriptions format' });
   }
 
+  const connection = await pool.getConnection();
   try {
-    const [companyInfo] = await datagenieDb.execute(
-      `SELECT company_id FROM users WHERE id = ?`,
-      [user_id]
-    );
-    if (!companyInfo.length) {
-      return res.status(404).json({ error: 'User or company not found' });
+    await connection.beginTransaction();
+
+    for (const desc of descriptions) {
+      const { column_id, description } = desc;
+      if (!column_id || !description) continue;
+
+      // Upsert logic for column descriptions
+      await connection.query(`
+        INSERT INTO column_descriptions (column_id, description)
+        VALUES (?, ?)
+        ON DUPLICATE KEY UPDATE description = VALUES(description)
+      `, [column_id, description]);
     }
 
-    const company_id = companyInfo[0].company_id;
-
-    const updateQuery = `
-      UPDATE column_descriptions
-      SET description = ?
-      WHERE company_id = ? AND table_name = ? AND column_name = ?
-    `;
-
-    for (const item of data) {
-      await executeWithRetry(updateQuery, [
-        item.description,
-        company_id,
-        item.table_name,
-        item.column_name,
-      ]);
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('❌ Failed to save schema descriptions:', err);
-    res.status(500).json({ error: 'Failed to save schema descriptions' });
-  }
-});
-
-// 📤 Step C: Get full schema for current company
-router.get('/', async (req, res) => {
-  const user_id = parseInt(req.query.user_id || '1');
-
-  try {
-    const [companyInfo] = await datagenieDb.execute(
-      `SELECT company_id FROM users WHERE id = ?`,
-      [user_id]
-    );
-    if (!companyInfo.length) {
-      return res.status(404).json({ error: 'User or company not found' });
-    }
-
-    const company_id = companyInfo[0].company_id;
-
-    const [rows] = await datagenieDb.execute(
-      `SELECT table_name, column_name, data_type, description
-       FROM column_descriptions
-       WHERE company_id = ?
-       ORDER BY table_name, column_name`,
-      [company_id]
-    );
-
-    res.json({ schema: rows });
-  } catch (err) {
-    console.error('❌ Failed to fetch schema:', err);
-    res.status(500).json({ error: 'Failed to fetch schema info' });
+    await connection.commit();
+    res.json({ message: 'Descriptions saved successfully' });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error in POST /schema/save-descriptions:', error);
+    res.status(500).json({ error: 'Failed to save descriptions' });
+  } finally {
+    connection.release();
   }
 });
 
